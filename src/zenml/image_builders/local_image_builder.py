@@ -119,14 +119,25 @@ class LocalImageBuilder(BaseImageBuilder):
         with tempfile.TemporaryFile(mode="w+b") as f:
             build_context.write_archive(f)
 
-            # We use the client api directly here, so we can stream the logs
-            output_stream = docker_client.images.client.api.build(
-                fileobj=f,
-                custom_context=True,
-                tag=image_name,
-                **(docker_build_options or {}),
-            )
-        docker_utils._process_stream(output_stream)
+            import subprocess
+
+            command = ["docker", "build", "-t", image_name]
+            if docker_build_options.get("pull", False):
+                command.append("--pull")
+
+            if "platform" in docker_build_options:
+                command.append("--platform")
+                command.append(docker_build_options["platform"])
+
+            build_args = docker_build_options.get("build_args", {})
+            for key, value in build_args.items():
+                command.append(f"--build-arg {key}={value}")
+
+            command.append("-")
+            process = subprocess.Popen(command, stdin=f)
+            result = process.wait()
+            if result != 0:
+                raise RuntimeError(f"Failed to build image {image_name}")
 
         if container_registry:
             return container_registry.push_image(image_name)
